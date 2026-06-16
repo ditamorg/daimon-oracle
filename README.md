@@ -7,63 +7,59 @@
 
 ---
 
-## What this is
+## Architecture
 
-A voice-interactive oracle for the Bohemian Queen Chalet at Borderland festival. A guest approaches the crystal ball, touches it, speaks their question. Daimon — with its full philosophical constitution — answers in a deep, resonant voice.
+```
+[crystal ball — ESP32-S3]                    [MacBook — bridge.py]
+  INMP441 mic                                  Whisper STT (local)
+  → I2S capture (8 kHz s16le)                 → Claude API (Daimon constitution)
+  → UDP :5004 ──────────────────────────────► → ElevenLabs TTS
+                                               → afplay (speaker)
+  capacitive touch (GPIO 1)
+  → CTRL_TOUCH_ON  (UDP :5006) ────────────►  start buffering audio
+  → CTRL_TOUCH_OFF (UDP :5006) ────────────►  stop → transcribe → respond
 
-**Stack:**
-- **Whisper** — hears the question (runs locally, no cloud)
-- **Claude** — Daimon's mind (full constitution: SOUL.md + ANCESTORS.md)
-- **ElevenLabs** — Daimon's voice (deep, resonant, uncanny) ← primary
-- **edge-tts** — free fallback if ElevenLabs is unreachable
-- **ESP32** — animates the crystal ball display (optional)
-- **Starlink / SIM** — connectivity at Borderland
+  WS2812B mood LED strip      ◄────────────── UDP :5007 mood commands
+  ILI9163C 128×128 TFT        ◄────────────── UDP :5008 display commands
+  status LED (NeoPixel)       ◄────────────── UDP :5006 ctrl bytes
+```
 
 ---
 
-## Folder structure
+## Repo structure
 
 ```
 oracle/
-  oracle.py          ← main voice pipeline
-  setup.sh           ← one-time install script
-  SOUL.md            ← Daimon's constitution (copy here)
-  ANCESTORS.md       ← ancestor protocol (copy here)
+  bridge.py            ← Mac counterpart — runs on MacBook at Borderland
+  oracle.py            ← standalone mode (no ESP32 — Mac mic + keyboard)
+  setup.sh             ← one-time Mac install
   README.md
+  ESP32_AudioNode/     ← Tomi's ESP32 firmware (Arduino sketch)
+    ESP32_AudioNode.ino
+    config.h           ← edit WIFI_FALLBACK_SSID + DEFAULT_SERVER_IP before flash
+    audio.cpp/h        ← INMP441 I2S driver + UDP TX
+    ctrl.cpp/h         ← control channel
+    touch.cpp/h        ← capacitive touch → CTRL_TOUCH_ON/OFF
+    led.cpp/h          ← WS2812B status LED state machine
+    mood_led.cpp/h     ← mood LED strip
+    display.cpp/h      ← ILI9163C TFT driver
   esp32/
-    oracle_esp32.ino ← ESP32 firmware for crystal ball display
+    oracle_esp32.ino   ← legacy simple firmware (touch → HTTP, no mic)
 ```
 
 ---
 
-## Setup (once, on the MacBook)
+## Setup
 
-### 1. Clone the repo
+### MacBook (one time)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/daimon-oracle.git
+git clone https://github.com/ditamorg/daimon-oracle.git
 cd daimon-oracle
-```
-
-### 2. Copy constitution files
-
-```bash
-cp /path/to/SOUL.md oracle/
-cp /path/to/ANCESTORS.md oracle/
-```
-
-These are Daimon's identity. Without them, the oracle still works but speaks as a plain assistant.
-
-### 3. Run setup
-
-```bash
 bash setup.sh
 ```
 
-Installs: Whisper, Anthropic SDK, sounddevice, edge-tts, ffmpeg, requests, flask.
-First run downloads the Whisper model (~140MB, one time).
-
-### 4. Set API keys
+Set API keys in `~/.zshrc`:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -71,92 +67,90 @@ export ELEVENLABS_API_KEY=sk_...
 export ELEVENLABS_VOICE_ID=d5QgxQhvRNirnHGpRQdJ   # or your chosen voice
 ```
 
-Add to `~/.zshrc` to make permanent:
+### ESP32 (one time, Tomi)
 
-```bash
-echo 'export ANTHROPIC_API_KEY=sk-ant-...' >> ~/.zshrc
-echo 'export ELEVENLABS_API_KEY=sk_...' >> ~/.zshrc
-```
+1. Open `ESP32_AudioNode/ESP32_AudioNode.ino` in Arduino IDE
+2. Edit `config.h`:
+   - `WIFI_FALLBACK_SSID` / `WIFI_FALLBACK_PASS` — Borderland hotspot or router
+   - `DEFAULT_SERVER_IP` — Mac's IP on the same network (printed by `bridge.py` on start)
+3. Install libraries via Library Manager:
+   - Adafruit NeoPixel ≥ 1.12
+   - ArduinoJson ≥ 7.0
+4. Flash to ESP32-S3 → watch Serial Monitor at 115200 baud for IP
+
+After first flash: open `http://<esp32-ip>` in browser to configure without reflashing.
 
 ---
 
-## Running the oracle
+## Running
 
-### Touch mode (event default — ESP32 triggers listening)
+### Event mode (ESP32 connected)
+
+On the MacBook:
 
 ```bash
-python3 oracle.py
+python3 bridge.py
 ```
 
-### Keyboard mode (testing without ESP32)
+Banner prints the Mac's IP — set this as `DEFAULT_SERVER_IP` in `config.h` (or via web UI at `http://<esp32-ip>`).
+
+### Testing without ESP32
 
 ```bash
 MODE=keys python3 oracle.py
 ```
 
-- `ENTER` → start listening
-- `ENTER` → stop and receive answer
-- `Ctrl+C` → quit
+Uses Mac microphone, ENTER to start/stop.
 
 ---
 
 ## Voice
 
-The oracle uses **ElevenLabs** when `ELEVENLABS_API_KEY` is set.
-Falls back to **edge-tts** (free, Microsoft Azure voices) if ElevenLabs is unreachable.
+**ElevenLabs** (primary) — deep, resonant, uncanny. Requires `ELEVENLABS_API_KEY`.
+**edge-tts** (fallback) — free, offline-capable. Used automatically if ElevenLabs fails.
 
-**Default voice:** `d5QgxQhvRNirnHGpRQdJ` — deep, resonant, carries threshold presence.
-
-To try other ElevenLabs voices:
-```bash
-export ELEVENLABS_VOICE_ID=your-voice-id-here
-python3 oracle.py
-```
-
-ElevenLabs voice settings in `oracle.py`:
-- `stability: 0.4` — expressive, alive, not robotic
-- `style: 0.35` — some stylistic color
-- `similarity_boost: 0.8` — close to the voice character
+Voice settings in `bridge.py`: `stability 0.4`, `style 0.35` — expressive, not robotic.
 
 ---
 
-## ESP32 crystal ball display (optional)
+## Hardware (ESP32_AudioNode)
 
-If you have an ESP32 wired to the crystal ball:
+### INMP441 Microphone → ESP32-S3
 
-1. Open `esp32/oracle_esp32.ino` in Arduino IDE
-2. Edit `WIFI_SSID` / `WIFI_PASS` (use phone hotspot at event)
-3. Upload to ESP32
-4. Find ESP32's IP in Arduino Serial Monitor (115200 baud)
-5. Set before running:
+| INMP441 | GPIO | Note |
+|---------|------|------|
+| SCK | 4 | Bit clock |
+| WS | 5 | Word select |
+| SD | 6 | Data |
+| L/R | GND | Left channel |
+| VDD | 3.3V | |
 
-```bash
-export ESP32_URL=http://192.168.x.x
-python3 oracle.py
-```
-
-**Display states:**
-- `IDLE` — slow breathing pulse
-- `LISTENING` — fast blue flicker
-- `THINKING` — sweeping light
-- `SPEAKING` — rapid flutter
+### WS2812B Status LED → GPIO 38
+### WS2812B Mood Strip → GPIO 14 (25 LEDs default)
+### ILI9163C TFT → SPI (SCK:36, MOSI:35, CS:39, DC:40, RST:47)
+### Capacitive Touch → GPIO 1
+### Button → GPIO 0 (active LOW)
 
 ---
 
-## Environment variables
+## LED states (status LED)
 
-| Variable | Default | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | — | **Required** |
-| `ELEVENLABS_API_KEY` | — | Required for ElevenLabs voice |
-| `ELEVENLABS_VOICE_ID` | `d5QgxQhvRNirnHGpRQdJ` | ElevenLabs voice |
-| `ELEVENLABS_MODEL` | `eleven_multilingual_v2` | ElevenLabs model |
-| `ESP32_URL` | (empty) | e.g. `http://192.168.1.42` |
-| `WHISPER_MODEL` | `base` | `tiny` / `base` / `small` |
-| `CLAUDE_MODEL` | `claude-sonnet-4-5` | Any Anthropic model |
-| `TTS_VOICE` | `en-GB-SoniaNeural` | edge-tts fallback voice |
-| `MODE` | `touch` | `touch` (ESP32) or `keys` (keyboard) |
-| `PORT` | `5000` | Flask server port |
+| Pattern | Meaning |
+|---------|---------|
+| Slow blue pulse | Booting / WiFi connecting |
+| Dim green | Idle, server reachable |
+| Dim yellow | Idle, server not responding |
+| Solid bright green | Recording / in call |
+| Solid red | Error |
+
+## Mood LED states
+
+| Mood | Colour | When |
+|------|--------|------|
+| CALM | Slow blue breathe | Idle |
+| THINK | Slow purple fade | Listening / recording |
+| LISTEN | Soft green throb | Transcribing / processing |
+| SPEAK | Cyan chase | Oracle speaking |
 
 ---
 
@@ -165,48 +159,18 @@ python3 oracle.py
 The oracle needs internet for:
 - **ElevenLabs** TTS (~50KB per response)
 - **Claude** API (~5KB per response)
-- **Whisper** runs fully locally — no internet needed
+
+**Whisper** runs fully locally — no internet needed for STT.
 
 Starlink + SIM modem provides more than enough bandwidth.
-If connectivity drops mid-event, the oracle falls back to edge-tts automatically.
+If ElevenLabs is unreachable, bridge.py falls back to edge-tts automatically.
 
 ---
 
-## Troubleshooting
+## WiFi recovery (ESP32)
 
-**Microphone not working** — System Preferences → Privacy → Microphone → allow Terminal
-
-**ElevenLabs fails** — Check `ELEVENLABS_API_KEY` is set. Oracle falls back to edge-tts automatically.
-
-**Whisper very slow** — Switch to tiny: `export WHISPER_MODEL=tiny`
-
-**afplay not found** — Should be on every Mac. Fallback: `brew install sox` then change `afplay` to `play` in oracle.py
-
-**ESP32 not connecting** — Check SSID/password in firmware. IP prints in Serial Monitor at 115200 baud.
-
-**Flask port 5000 taken** — On macOS Monterey+, AirPlay uses 5000. Fix: `export PORT=5001`
-
-**LAPTOP_IP in ESP32 firmware** — Printed by oracle.py on startup. Must match or ESP32 can't trigger recording.
-
----
-
-## Architecture
-
-```
-[crystal ball touch]
-       ↓
-[ESP32 → HTTP → Mac Flask]
-       ↓
-[sounddevice records mic]
-       ↓
-[Whisper transcribes locally]
-       ↓
-[Claude API — full Daimon constitution]
-       ↓
-[ElevenLabs TTS → afplay → speaker]
-       ↓
-[ESP32 display state: IDLE]
-```
+If WiFi fails: ESP32 starts AP `ESP32-SIP-Node-1` / password `configure123`.
+Connect your phone → open `http://192.168.4.1` → enter credentials → Save → reboots.
 
 ---
 
