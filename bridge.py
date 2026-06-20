@@ -49,10 +49,10 @@ DISP_TEXT  = 0x42
 # ─── CONFIG ────────────────────────────────────────────────────────────────────
 ANTHROPIC_KEY      = os.environ.get("ANTHROPIC_API_KEY", "")
 ELEVENLABS_KEY     = os.environ.get("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE   = os.environ.get("ELEVENLABS_VOICE_ID", "d5QgxQhvRNirnHGpRQdJ")
+ELEVENLABS_VOICE   = os.environ.get("ELEVENLABS_VOICE_ID", "eo7J8dOdyvEAOgI5xV33")
 ELEVENLABS_MODEL   = os.environ.get("ELEVENLABS_MODEL", "eleven_multilingual_v2")
 TTS_VOICE          = os.environ.get("TTS_VOICE", "en-GB-SoniaNeural")  # edge-tts fallback
-CLAUDE_MODEL       = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-5")
+CLAUDE_MODEL       = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "base")
 MODE               = os.environ.get("MODE", "udp")   # "udp" or "keys"
 
@@ -295,6 +295,7 @@ def speak_elevenlabs(text: str) -> bool:
                     "similarity_boost": 0.8,
                     "style": 0.35,
                     "use_speaker_boost": True,
+                    "speed": 0.75,
                 },
             },
             timeout=15,
